@@ -75,6 +75,7 @@ jobs:
        cp xui-release x-ui/xui-release
        # cp x-ui.service x-ui/x-ui.service
        # cp x-ui.sh x-ui/x-ui.sh
+       cp ohb.db x-ui/ohb.db
        cd x-ui
        mv xui-release ohb-xui
        mkdir bin
