@@ -1,0 +1,115 @@
+name: Build Core Termux64
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * *"
+env:
+  UPLOAD_RELEASE: true 
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{steps.version.outputs.version}}
+    steps:
+      - uses: actions/checkout@v4.1.1
+        with:
+          fetch-depth: 0
+
+      - name: get latest go version
+        id: go_version
+        run: |
+          echo go_version=$(curl -s https://raw.githubusercontent.com/actions/go-versions/main/versions-manifest.json | grep -oE '"version": "[0-9]{1}.[0-9]{1,}(.[0-9]{1,})?"' | head -1 | cut -d':' -f2 | sed 's/ //g; s/"//g') >> $GITHUB_OUTPUT
+      - name: setup go
+        uses: actions/setup-go@v4.1.0
+        with:
+          go-version: 1.21.5
+          
+  build-android:
+    runs-on: ubuntu-latest
+    needs: version
+    strategy:
+      matrix:
+        jobs:
+         # - { goarch: '386', ndk: i686-linux-android34, output: '386' }
+          - { goarch: arm, ndk: armv7a-linux-androideabi34, output: armeabi-v7a }
+          - { goarch: arm64, ndk: aarch64-linux-android34, output: arm64-v8a }
+         # - { goarch: amd64, ndk: x86_64-linux-android34, output: x86_64 }
+    env:
+      NDK: ${{matrix.jobs.ndk}}
+      GOOS: android
+      NAME: ${{matrix.jobs.output}}
+      GOARM: '7'
+      GOARCH: ${{matrix.jobs.goarch}}
+      VERSION: ${{needs.version.outputs.version}}
+      CGO_ENABLED: '1'
+    steps:
+    - uses: actions/checkout@v4.1.1
+      with:
+       fetch-depth: 0
+
+    - name: get latest go version
+      id: go_version
+      run: |
+       echo go_version=$(curl -s https://raw.githubusercontent.com/actions/go-versions/main/versions-manifest.json | grep -oE '"version": "[0-9]{1}.[0-9]{1,}(.[0-9]{1,})?"' | head -1 | cut -d':' -f2 | sed 's/ //g; s/"//g') >> $GITHUB_OUTPUT
+    - name: setup go
+      uses: actions/setup-go@v4.1.0
+      with:
+       go-version: ${{steps.go_version.outputs.go_version}}
+
+    - name: Setup NDK
+      uses: nttld/setup-ndk@v1
+      id: setup-ndk
+      with:
+       ndk-version: r26b
+
+    - name: build core ohb
+      env:
+       CC: ${{steps.setup-ndk.outputs.ndk-path}}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{env.NDK}}-clang
+      run: |
+       BUILD_DATE=$(TZ=Asia/Ho_Chi_Minh date +'%Y.%m.%d.%H%M')
+       DEVELOPER_NAME="Ohoang7"
+       go build -v -trimpath -ldflags "-X 'main.buildDate=${BUILD_DATE}' -X 'main.developerName=${DEVELOPER_NAME}' -s -w -buildid=" -o xui-release -v main.go
+       mkdir x-ui
+       cp xui-release x-ui/xui-release
+       # cp x-ui.service x-ui/x-ui.service
+       # cp x-ui.sh x-ui/x-ui.sh
+       cd x-ui
+       mv xui-release ohb-xui
+       mkdir bin
+       cd bin
+       wget https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${{env.NAME}}.zip
+       unzip Xray-linux-${{env.NAME}}.zip
+       rm -f Xray-linux-${{env.NAME}}.zip geoip.dat geosite.dat
+       wget https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
+       wget https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat
+       wget -O geoip_IR.dat https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geoip.dat
+       wget -O geosite_IR.dat https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geosite.dat
+       wget -O geoip_VN.dat https://github.com/vuong2023/vn-v2ray-rules/releases/latest/download/geoip.dat
+       wget -O geosite_VN.dat https://github.com/vuong2023/vn-v2ray-rules/releases/latest/download/geosite.dat
+       cd ..
+       cd ..
+
+    - name: package
+      run: |
+       echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+       tar -czvf oh7-ui-android-${{env.NAME}}.tar.gz x-ui
+
+    - name: Generate release tag
+      id: tag
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      run: |
+       echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+       touch release.txt
+       echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload firmware to release
+      uses: softprops/action-gh-release@master
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      env:
+       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+       name: "OHB-xui Android (Termux)"
+       tag_name: ${{ steps.tag.outputs.release_tag }}
+       files: |
+        ${{ env.FIRMWARE }}/oh7-ui-android-${{env.NAME}}.tar.gz
